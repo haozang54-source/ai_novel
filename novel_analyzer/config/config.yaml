@@ -1,0 +1,38 @@
+# LLM配置
+# 注意：敏感信息已移至 .env 文件
+# 此处配置会被环境变量覆盖
+llm:
+  provider: "openai"              # openai 或 ollama (会被 LLM_PROVIDER 环境变量覆盖)
+  model: "qwen2.5:7b-instruct"    # 模型名称 (会被环境变量覆盖)
+  base_url: "http://localhost:11434"  # API服务地址 (会被环境变量覆盖)
+  api_key: "dummy"                # API密钥 (会被环境变量覆盖)
+  temperature: 0.3                # 可在环境变量中覆盖
+  max_tokens: 3000                # 可在环境变量中覆盖
+
+# 分层处理配置
+processing:
+  chapter_batch_size: 1           # 单次处理章节数
+  segment_size: 20                # 每个分段包含的章节数
+  save_intermediate: true         # 是否保存中间结果
+  
+# 文本处理配置
+preprocessing:
+  encoding: "utf-8"
+  min_chapter_length: 500         # 最小章节字数（跳过太短的）
+  max_chapter_length: 20000       # 最大章节字数
+  
+# 提取配置
+extraction:
+  retry_times: 3                  # JSON解析失败重试次数
+  timeout: 120                    # 单次LLM调用超时(秒)
+  
+# 输出配置
+output:
+  generate_report: true           # 是否生成markdown报告
+  pretty_json: true               # JSON是否格式化
+  clean_intermediate: false       # 完成后是否清理中间文件
+  
+# 日志配置
+logging:
+  level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
+  file: "logs/analyzer.log"
