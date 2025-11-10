@@ -5,6 +5,7 @@ import os
 import sys
 import yaml
 import argparse
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -104,12 +105,82 @@ def init_llm(config: dict):
     return llm
 
 
+def check_time_allowed(config: dict) -> bool:
+    """
+    检查当前时间是否在允许的运行时间段内
+    
+    Args:
+        config: 配置字典
+        
+    Returns:
+        是否允许运行
+    """
+    runtime_config = config.get('runtime', {})
+    if not runtime_config:
+        return True  # 如果没有配置运行时间限制，默认允许
+    
+    start_hour = runtime_config.get('start', 22)  # 默认晚上10点
+    end_hour = runtime_config.get('end', 8)       # 默认早上8点
+    
+    current_hour = datetime.now().hour
+    
+    # 处理跨天的情况（如 22点到次日8点）
+    if start_hour > end_hour:
+        # 跨天：22点-24点 或 0点-8点
+        allowed = current_hour >= start_hour or current_hour < end_hour
+    else:
+        # 不跨天：8点-22点
+        allowed = start_hour <= current_hour < end_hour
+    
+    return allowed
+
+
+def wait_for_allowed_time(config: dict):
+    """
+    等待到允许的运行时间段
+    
+    Args:
+        config: 配置字典
+    """
+    runtime_config = config.get('runtime', {})
+    if not runtime_config:
+        return  # 如果没有配置运行时间限制，直接返回
+    
+    start_hour = runtime_config.get('start', 22)
+    end_hour = runtime_config.get('end', 8)
+    
+    while not check_time_allowed(config):
+        current_time = datetime.now()
+        current_hour = current_time.hour
+        
+        # 计算距离下次允许时间的小时数
+        if start_hour > end_hour:  # 跨天
+            if current_hour < start_hour and current_hour >= end_hour:
+                hours_to_wait = start_hour - current_hour
+            else:
+                hours_to_wait = 1
+        else:  # 不跨天
+            hours_to_wait = start_hour - current_hour if current_hour < start_hour else 24 - current_hour + start_hour
+        
+        print(f"\n⏰ 当前时间 {current_time.strftime('%H:%M')} 不在允许的运行时间段内")
+        print(f"   允许运行时间：{start_hour:02d}:00 - {end_hour:02d}:00")
+        print(f"   预计等待约 {hours_to_wait} 小时")
+        print(f"   将每5分钟检查一次...\n")
+        
+        time.sleep(300)  # 等待5分钟后重新检查
+
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='爆款小说分析工具')
     parser.add_argument('--input', '-i', required=True, help='小说文件夹路径')
     parser.add_argument('--output', '-o', required=True, help='输出模板目录')
     parser.add_argument('--config', '-c', help='配置文件路径')
+    parser.add_argument('--no-time-check', action='store_true', help='跳过运行时间检查')
+    parser.add_argument('--use-v2', action='store_true', help='使用V2分段输出版本（更稳定，容错性更强）')
+    parser.add_argument('--aggregate', action='store_true', help='聚合章节数据并生成分层存储')
+    parser.add_argument('--model-type', default='gpt4', choices=['gpt4', 'claude', 'llama3'],
+                       help='目标LLM类型（用于分块大小控制）')
     
     args = parser.parse_args()
     
@@ -124,6 +195,20 @@ def main():
     print("⚙️  加载配置...")
     config = load_config(args.config)
     
+    # 检查运行时间（除非使用了 --no-time-check 参数）
+    if not args.no_time_check:
+        print("🕐 检查运行时间...")
+        wait_for_allowed_time(config)
+        
+        if check_time_allowed(config):
+            runtime_config = config.get('runtime', {})
+            if runtime_config:
+                start = runtime_config.get('start', 22)
+                end = runtime_config.get('end', 8)
+                print(f"✓ 当前时间允许运行（允许时段：{start:02d}:00-{end:02d}:00）")
+    else:
+        print("⚠️  已跳过运行时间检查")
+    
     # 初始化LLM
     print("🤖 初始化LLM...")
     llm = init_llm(config)
@@ -134,6 +219,28 @@ def main():
     os.makedirs(intermediate_dir, exist_ok=True)
     
     try:
+        # 如果只是聚合数据，跳过分析流程
+        if args.aggregate:
+            from processors.layered_storage import LayeredStorageGenerator
+            
+            # 提取小说名称
+            novel_name = os.path.basename(args.input.rstrip('/'))
+            chapter_summaries_dir = os.path.join(args.output, 'intermediate', 'chapter_summaries')
+            
+            # 检查章节摘要目录是否存在
+            if not os.path.exists(chapter_summaries_dir):
+                print(f"❌ 章节摘要目录不存在: {chapter_summaries_dir}")
+                print("   请先运行章节分析生成摘要数据")
+                return
+            
+            # 创建分层存储生成器
+            storage_dir = os.path.join(args.output, 'knowledge_base')
+            generator = LayeredStorageGenerator(novel_name, storage_dir, args.model_type)
+            
+            # 生成所有层级
+            generator.generate_all_layers(chapter_summaries_dir)
+            return
+        
         # 第一步：预处理
         print("\n" + "="*60)
         print("步骤 1: 文件预处理")
@@ -149,7 +256,21 @@ def main():
         print("\n" + "="*60)
         print("步骤 2: 单章分析")
         print("="*60)
-        chapter_analyzer = ChapterAnalyzer(llm, config, intermediate_dir)
+        
+        # 再次检查时间（分析可能很长）
+        if not args.no_time_check and not check_time_allowed(config):
+            print("⚠️  已超出允许的运行时间段，暂停分析...")
+            wait_for_allowed_time(config)
+            print("✓ 恢复分析...")
+        
+        # 根据参数选择分析器版本
+        if args.use_v2:
+            from analyzers.chapter_analyzer_v2 import ChapterAnalyzerV2
+            print("🔧 使用V2分段输出版本")
+            chapter_analyzer = ChapterAnalyzerV2(llm, config, intermediate_dir, args.no_time_check)
+        else:
+            chapter_analyzer = ChapterAnalyzer(llm, config, intermediate_dir, args.no_time_check)
+        
         chapter_results = chapter_analyzer.batch_analyze(chapters)
         
         if not chapter_results:

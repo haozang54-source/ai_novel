@@ -3,17 +3,18 @@
 """
 import os
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from langchain_community.llms import Ollama
 from utils.file_utils import FileUtils
 from utils.json_parser import JSONParser
 from utils.prompt_templates import PromptTemplates
+from utils.time_checker import TimeChecker
 
 
 class ChapterAnalyzer:
     """单章分析器"""
     
-    def __init__(self, llm, config: dict, output_dir: str):
+    def __init__(self, llm, config: dict, output_dir: str, no_time_check: bool = False):
         """
         初始化单章分析器
         
@@ -21,13 +22,19 @@ class ChapterAnalyzer:
             llm: LangChain LLM实例
             config: 配置字典
             output_dir: 输出目录
+            no_time_check: 是否跳过时间检查
         """
         self.llm = llm
         self.config = config
         self.output_dir = os.path.join(output_dir, 'chapter_summaries')
         os.makedirs(self.output_dir, exist_ok=True)
         
-        self.retry_times = config.get('extraction', {}).get('retry_times', 3)
+        self.retry_times = config.get('extraction', {}).get('retry_times', 10)  # 默认10次
+        self.no_time_check = no_time_check
+        
+        # 如果禁用时间检查，传入空配置给TimeChecker
+        time_check_config = {} if no_time_check else config
+        self.time_checker = TimeChecker(time_check_config)
     
     def analyze_chapter(self, chapter: Dict) -> Optional[Dict]:
         """
@@ -172,6 +179,9 @@ class ChapterAnalyzer:
         print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         for idx, chapter in enumerate(chapters, 1):
+            # 检查时间（每个章节前检查）
+            self.time_checker.check_and_wait()
+            
             print(f"📖 分析章节 {idx}/{total}: {chapter.get('title', chapter['filename'])}")
             
             result = self.analyze_chapter(chapter)

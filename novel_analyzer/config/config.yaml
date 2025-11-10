@@ -23,8 +23,15 @@ preprocessing:
   
 # 提取配置
 extraction:
-  retry_times: 3                  # JSON解析失败重试次数
+  retry_times: 10                 # JSON解析失败重试次数（已提高）
   timeout: 120                    # 单次LLM调用超时(秒)
+  
+# 运行时间限制
+runtime:
+  allowed_hours:                  # 允许运行的时间段
+    start: 22                     # 开始时间（22点 = 晚上10点）
+    end: 8                        # 结束时间（8点 = 早上8点）
+  check_interval: 300             # 时间检查间隔（秒），默认5分钟
   
 # 输出配置
 output:
