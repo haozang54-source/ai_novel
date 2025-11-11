@@ -63,11 +63,13 @@ def init_llm(config: dict):
         LLM实例
     """
     llm_config = config.get('llm', {})
+    extraction_config = config.get('extraction', {})
     
     # 从环境变量读取配置（优先级高于config.yaml）
     provider = os.getenv('LLM_PROVIDER', llm_config.get('provider', 'ollama'))
     temperature = float(os.getenv('LLM_TEMPERATURE', llm_config.get('temperature', 0.3)))
     max_tokens = int(os.getenv('LLM_MAX_TOKENS', llm_config.get('max_tokens', 3000)))
+    timeout = int(os.getenv('LLM_TIMEOUT', extraction_config.get('timeout', 120)))
     
     if provider == 'ollama':
         model = os.getenv('OLLAMA_MODEL', llm_config.get('model', 'qwen2.5:7b-instruct'))
@@ -77,10 +79,12 @@ def init_llm(config: dict):
             model=model,
             base_url=base_url,
             temperature=temperature,
+            timeout=timeout,
         )
         print(f"✓ 使用 Ollama 模型")
         print(f"  模型: {model}")
         print(f"  地址: {base_url}")
+        print(f"  超时: {timeout}秒")
     
     elif provider == 'openai':
         model = os.getenv('OPENAI_MODEL', llm_config.get('model', 'gpt-3.5-turbo'))
@@ -93,11 +97,12 @@ def init_llm(config: dict):
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            request_timeout=timeout,
         )
         print(f"✓ 使用 OpenAI 兼容接口")
         print(f"  模型: {model}")
         print(f"  地址: {base_url}")
-        print(f"  温度: {temperature}, 最大Token: {max_tokens}")
+        print(f"  温度: {temperature}, 最大Token: {max_tokens}, 超时: {timeout}秒")
     
     else:
         raise ValueError(f"不支持的LLM provider: {provider}")

@@ -94,7 +94,7 @@ class ChapterAnalyzerV2:
         success_count = 0
         
         for task_name in self.TASKS:
-            print(f"    → 提取 {task_name}...")
+            print(f"    → 提取 {task_name}...", end='', flush=True)
             
             # 检查是否已有缓存
             temp_file = os.path.join(chapter_temp_dir, f"{task_name}.json")
@@ -102,14 +102,16 @@ class ChapterAnalyzerV2:
                 try:
                     with open(temp_file, 'r', encoding='utf-8') as f:
                         result[task_name] = json.load(f)
-                    print(f"      ✓ 从缓存加载")
+                    print(f" ✓ 从缓存加载")
                     success_count += 1
                     continue
                 except Exception as e:
-                    print(f"      ⚠️  缓存文件损坏，重新提取: {e}")
+                    print(f" ⚠️  缓存损坏，重新提取")
             
             # 调用LLM提取该部分
+            task_start = time.time()
             task_result = self._retry_extract(task_name, content, chapter_number)
+            task_elapsed = time.time() - task_start
             
             if task_result is not None:
                 result[task_name] = task_result
@@ -117,12 +119,12 @@ class ChapterAnalyzerV2:
                 try:
                     with open(temp_file, 'w', encoding='utf-8') as f:
                         json.dump(task_result, f, ensure_ascii=False, indent=2)
-                    print(f"      ✓ 成功")
+                    print(f" ✓ 成功 ({task_elapsed:.1f}秒)")
                     success_count += 1
                 except Exception as e:
-                    print(f"      ⚠️  保存失败: {e}")
+                    print(f" ⚠️  保存失败: {e}")
             else:
-                print(f"      ✗ 失败")
+                print(f" ✗ 失败 ({task_elapsed:.1f}秒)")
             
             # 避免请求过快
             time.sleep(0.5)
@@ -159,6 +161,10 @@ class ChapterAnalyzerV2:
         """
         for attempt in range(self.retry_times):
             try:
+                # 显示等待提示
+                if attempt > 0:
+                    print(f"\n        🔄 重试 {attempt}/{self.retry_times}...", end='', flush=True)
+                
                 if task_name == 'characters':
                     result = self._extract_characters(content, chapter_number)
                 elif task_name == 'locations':
@@ -176,13 +182,18 @@ class ChapterAnalyzerV2:
                 
                 if result is not None:
                     return result
+                else:
+                    if attempt < self.retry_times - 1:
+                        print(f"\n        ⚠️  解析失败，准备重试", end='', flush=True)
+                        time.sleep(1)
                     
             except Exception as e:
+                error_msg = str(e)[:100]
                 if attempt < self.retry_times - 1:
-                    print(f"        ⚠️  重试 {attempt + 1}/{self.retry_times}: {e}")
+                    print(f"\n        ⚠️  错误: {error_msg}", end='', flush=True)
                     time.sleep(1)
                 else:
-                    print(f"        ❌ 达到最大重试次数: {e}")
+                    print(f"\n        ❌ 最终失败: {error_msg}", end='', flush=True)
         
         return None
     
@@ -214,9 +225,20 @@ class ChapterAnalyzerV2:
 
 只输出JSON数组，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'characters')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
     
     def _extract_locations(self, content: str, chapter_number: int) -> Optional[List]:
         """提取地点信息"""
@@ -237,9 +259,20 @@ class ChapterAnalyzerV2:
 
 只输出JSON数组，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'locations')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
     
     def _extract_events(self, content: str, chapter_number: int) -> Optional[List]:
         """提取事件信息"""
@@ -261,9 +294,20 @@ class ChapterAnalyzerV2:
 
 只输出JSON数组，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'events')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
     
     def _extract_world_elements(self, content: str, chapter_number: int) -> Optional[List]:
         """提取世界观元素"""
@@ -283,9 +327,20 @@ class ChapterAnalyzerV2:
 
 只输出JSON数组，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'world_elements')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
     
     def _extract_writing_style(self, content: str, chapter_number: int) -> Optional[Dict]:
         """提取写作风格"""
@@ -304,9 +359,76 @@ class ChapterAnalyzerV2:
 
 只输出JSON对象，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'writing_style_notes')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
+    
+    def _fix_json_with_llm(self, broken_json: str, data_type: str) -> Optional[any]:
+        """
+        让LLM修复错误的JSON格式
+        
+        Args:
+            broken_json: 错误的JSON字符串
+            data_type: 数据类型（characters/locations/events等）
+            
+        Returns:
+            修复后的数据
+        """
+        # 根据数据类型定义期望格式
+        format_examples = {
+            "characters": '[{"name":"张三","role":"protagonist","first_appearance":false,"status_changes":[],"relationships":[],"appearance_traits":[],"personality_traits":[]}]',
+            "locations": '[{"name":"望月湖","type":"湖泊","first_appearance":false,"description":""}]',
+            "events": '[{"type":"development","description":"事件描述","importance":"medium","emotional_tone":"平静","participants":[]}]',
+            "world_elements": '[{"type":"power_system","element":"元素名","details":""}]',
+            "writing_style_notes": '{"narrative_perspective":"第三人称","key_phrases":[],"emotional_intensity":"medium","description_focus":[]}',
+            "chapter_summary": '{"title":"标题","main_content":"内容","key_points":[],"chapter_purpose":"目的"}'
+        }
+        
+        expected_format = format_examples.get(data_type, "[]")
+        
+        fix_prompt = f"""你之前输出的JSON格式有误，无法被解析。请修复以下JSON，使其符合标准格式。
+
+错误的输出：
+{broken_json[:500]}
+
+期望的格式示例：
+{expected_format}
+
+要求：
+1. 只输出修复后的JSON，不要有任何解释或markdown标记
+2. 确保所有字段都存在
+3. 确保JSON语法完全正确
+4. 如果原内容无法提取有效数据，返回空数组[]或空对象{{}}
+
+修复后的JSON："""
+        
+        try:
+            response = self.llm.invoke(fix_prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # 再次尝试解析
+            result = JSONParser.parse(response_text)
+            if result is not None:
+                print(f"        ✓ JSON已自动修复")
+                return result
+            else:
+                print(f"        ✗ JSON修复失败")
+                return None
+                
+        except Exception as e:
+            print(f"        ✗ JSON修复异常: {str(e)[:50]}")
+            return None
     
     def _extract_chapter_summary(self, content: str, chapter_number: int) -> Optional[Dict]:
         """提取章节摘要"""
@@ -325,9 +447,20 @@ class ChapterAnalyzerV2:
 
 只输出JSON对象，不要其他文字。"""
         
-        response = self.llm.invoke(prompt)
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        return JSONParser.parse(response_text)
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            result = JSONParser.parse(response_text)
+            
+            # 如果解析失败，尝试让LLM修复
+            if result is None:
+                print(f"        ⚠️  JSON解析失败，尝试修复...", end='', flush=True)
+                result = self._fix_json_with_llm(response_text, 'chapter_summary')
+            
+            return result
+        except Exception as e:
+            print(f"        ⚠️  LLM调用异常: {str(e)[:100]}")
+            raise
     
     def _cleanup_temp_files(self, temp_dir: str):
         """清理临时文件"""
