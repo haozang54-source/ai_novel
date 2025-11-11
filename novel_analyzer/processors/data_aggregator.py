@@ -23,9 +23,13 @@ class DataAggregator:
             raise ValueError(f"章节摘要目录不存在: {chapter_summaries_dir}")
     
     def load_all_chapters(self) -> List[Dict]:
-        """加载所有章节JSON文件"""
+        """加载所有章节JSON文件，并按chapter_number排序"""
         chapters = []
-        chapter_files = sorted(self.chapter_dir.glob("chapter_*.json"))
+        # 修改glob模式，排除.backup文件
+        chapter_files = [
+            f for f in self.chapter_dir.glob("*.json")
+            if not f.name.endswith('.backup')
+        ]
         
         for file_path in chapter_files:
             try:
@@ -34,6 +38,9 @@ class DataAggregator:
                     chapters.append(chapter_data)
             except Exception as e:
                 print(f"⚠️  加载章节文件失败 {file_path.name}: {e}")
+        
+        # 按chapter_number排序（确保章节顺序正确）
+        chapters.sort(key=lambda x: x.get('chapter_number', 0))
         
         return chapters
     
@@ -60,12 +67,18 @@ class DataAggregator:
                         'name': name,
                         'role': char.get('role', 'unknown'),
                         'first_appearance_chapter': chapter_num,
+                        'first_appearance_title': chapter_title,
                         'appearance_chapters': [],
                         'status_changes': [],
                         'relationships': [],
                         'appearance_traits': set(),
                         'personality_traits': set()
                     }
+                else:
+                    # 更新首次出现章节（取最小的chapter_number）
+                    if chapter_num < characters_dict[name]['first_appearance_chapter']:
+                        characters_dict[name]['first_appearance_chapter'] = chapter_num
+                        characters_dict[name]['first_appearance_title'] = chapter_title
                 
                 # 记录出现章节
                 characters_dict[name]['appearance_chapters'].append({
@@ -135,9 +148,15 @@ class DataAggregator:
                         'name': name,
                         'type': loc.get('type', 'unknown'),
                         'first_appearance_chapter': chapter_num,
+                        'first_appearance_title': chapter_title,
                         'appearance_chapters': [],
                         'descriptions': []
                     }
+                else:
+                    # 更新首次出现章节（取最小的chapter_number）
+                    if chapter_num < locations_dict[name]['first_appearance_chapter']:
+                        locations_dict[name]['first_appearance_chapter'] = chapter_num
+                        locations_dict[name]['first_appearance_title'] = chapter_title
                 
                 locations_dict[name]['appearance_chapters'].append({
                     'chapter_number': chapter_num,
@@ -191,7 +210,8 @@ class DataAggregator:
             按类型分类的世界观元素字典
         """
         world_elements = defaultdict(list)
-        seen_elements = set()
+        # 改用字典来追踪每个元素的首次出现章节
+        element_first_chapter = {}
         
         for chapter in chapters:
             chapter_num = chapter.get('chapter_number')
@@ -200,17 +220,26 @@ class DataAggregator:
                 elem_type = element.get('type', 'unknown')
                 elem_name = element.get('element', '')
                 
-                # 去重（基于类型和名称）
+                # 基于类型和名称的唯一key
                 key = (elem_type, elem_name)
-                if key in seen_elements:
-                    continue
-                seen_elements.add(key)
                 
-                world_elements[elem_type].append({
-                    'element': elem_name,
-                    'details': element.get('details', ''),
-                    'first_mentioned_chapter': chapter_num
-                })
+                # 更新首次出现章节（取最小值）
+                if key not in element_first_chapter:
+                    element_first_chapter[key] = chapter_num
+                    world_elements[elem_type].append({
+                        'element': elem_name,
+                        'details': element.get('details', ''),
+                        'first_mentioned_chapter': chapter_num
+                    })
+                else:
+                    # 如果当前章节更早，更新首次出现章节
+                    if chapter_num < element_first_chapter[key]:
+                        # 找到并更新该元素
+                        for elem in world_elements[elem_type]:
+                            if elem['element'] == elem_name:
+                                elem['first_mentioned_chapter'] = chapter_num
+                                element_first_chapter[key] = chapter_num
+                                break
         
         return dict(world_elements)
     

@@ -12,6 +12,15 @@ python-dotenv = "*"
 pyyaml = "*"
 pydantic = "*"
 tqdm = "*"
+openai = "*"
+flask = "==3.0.0"
+flask-cors = "==4.0.0"
+flask-socketio = "==5.3.5"
+flask-sqlalchemy = "==3.1.1"
+flask-migrate = "==4.0.5"
+marshmallow = "==3.20.1"
+python-socketio = "==5.10.0"
+eventlet = "==0.33.3"
 
 [dev-packages]
 
