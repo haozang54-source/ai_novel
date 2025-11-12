@@ -1,0 +1,642 @@
+import { useEffect, useState, useRef } from 'react';
+import { 
+  Card, 
+  List, 
+  Button, 
+  Space, 
+  Typography, 
+  Input, 
+  message, 
+  Spin,
+  Tag,
+  Divider,
+  Row,
+  Col,
+  Modal,
+  Form,
+  Popconfirm,
+  Tree
+} from 'antd';
+import { 
+  EditOutlined, 
+  SaveOutlined, 
+  RobotOutlined,
+  FileTextOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+  FolderOutlined,
+  FileOutlined
+} from '@ant-design/icons';
+import type { TreeDataNode } from 'antd';
+import axios from 'axios';
+import { chapterApi } from '../../../services/api';
+import { useOutlineStore } from '../../../store/outlineStore';
+import AIAssistantPanel from '../../../components/AIAssistantPanel';
+
+const { Title, Text, Paragraph } = Typography;
+const { TextArea } = Input;
+
+interface Chapter {
+  id?: number;
+  outline_chapter_id: number;
+  content: string;
+  word_count: number;
+  status: string;
+}
+
+interface ChapterInfo {
+  outline_chapter_id: number;
+  chapter_num: number;
+  title: string;
+  summary: string;
+  chapter: Chapter | null;
+}
+
+interface ProjectChaptersResponse {
+  message: string;
+  outline_level: 'chapter' | 'volume' | null;
+  chapters: ChapterInfo[];
+  volumes?: Array<{
+    outline_chapter_id: number;
+    volume_num: number;
+    title: string;
+    summary: string;
+  }>;
+}
+
+interface VolumeTreeNode {
+  volume_num: number;
+  title: string;
+  children: ChapterInfo[];
+}
+
+interface ChapterWritingTabProps {
+  projectId: number;
+}
+
+/**
+ * 章节编写Tab - 专注于正文创作
+ */
+export default function ChapterWritingTab({ projectId }: ChapterWritingTabProps) {
+  const [chapters, setChapters] = useState<ChapterInfo[]>([]);
+  const [volumeTree, setVolumeTree] = useState<VolumeTreeNode[]>([]);
+  const [outlineLevel, setOutlineLevel] = useState<'chapter' | 'volume' | null>(null);
+  const [responseMessage, setResponseMessage] = useState('');
+  const [selectedChapter, setSelectedChapter] = useState<ChapterInfo | null>(null);
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
+  // AI助手相关状态
+  const [aiPanelVisible, setAiPanelVisible] = useState(false);
+  const [selectedText, setSelectedText] = useState('');
+  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
+  const textAreaRef = useRef<any>(null);
+  const hasLoadedRef = useRef(false);
+  const loadedProjectIdRef = useRef<number | null>(null);
+  
+  // 章节管理相关状态
+  const [isAddModalVisible, setIsAddModalVisible] = useState(false);
+  const [isEditChapterModalVisible, setIsEditChapterModalVisible] = useState(false);
+  const [editingChapterInfo, setEditingChapterInfo] = useState<ChapterInfo | null>(null);
+  const [addForm] = Form.useForm();
+  const [editForm] = Form.useForm();
+  
+  const { outline } = useOutlineStore();
+
+  useEffect(() => {
+    // 防止 React StrictMode 导致的重复调用
+    if (hasLoadedRef.current && loadedProjectIdRef.current === projectId) {
+      return;
+    }
+    
+    hasLoadedRef.current = true;
+    loadedProjectIdRef.current = projectId;
+    loadChapters();
+  }, [projectId]);
+
+  const loadChapters = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get<ProjectChaptersResponse>(`/api/chapters/project/${projectId}`);
+      const data = response.data;
+      
+      setOutlineLevel(data.outline_level);
+      setResponseMessage(data.message);
+      setChapters(data.chapters || []);
+      
+      // 如果是卷级大纲，构建树形结构
+      if (data.outline_level === 'volume' && data.chapters.length > 0) {
+        // 获取大纲数据来构建完整的卷结构
+        const outlineResponse = await axios.get(`/api/projects/${projectId}/outline?hierarchy=true`);
+        const outline = outlineResponse.data;
+        
+        // 构建卷-章节树
+        const tree: VolumeTreeNode[] = outline.chapters.map((vol: any) => ({
+          volume_num: vol.chapter_num,
+          title: vol.title,
+          children: data.chapters.filter((ch: ChapterInfo) => ch.parent_id === vol.id)
+        }));
+        
+        setVolumeTree(tree);
+      } else {
+        setVolumeTree([]);
+      }
+      
+      if (data.outline_level === 'volume' && data.chapters.length === 0) {
+        message.warning(data.message);
+      }
+    } catch (error) {
+      message.error('加载章节列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectChapter = (chapterInfo: ChapterInfo) => {
+    setSelectedChapter(chapterInfo);
+    setContent(chapterInfo.chapter?.content || '');
+  };
+
+  const handleSave = async () => {
+    if (!selectedChapter) return;
+
+    setSaving(true);
+    try {
+      await axios.post(`/api/chapters/outline-chapter/${selectedChapter.outline_chapter_id}`, {
+        content,
+        status: 'draft'
+      });
+      message.success('保存成功');
+      loadChapters();
+    } catch (error) {
+      message.error('保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 处理文本选择
+  const handleTextSelect = () => {
+    if (!textAreaRef.current) return;
+
+    const textarea = textAreaRef.current.resizableTextArea.textArea;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+
+    if (start !== end) {
+      const selected = content.substring(start, end);
+      setSelectedText(selected);
+      setSelectionRange({ start, end });
+    }
+  };
+
+  // 打开AI助手
+  const handleOpenAI = () => {
+    if (!selectedText) {
+      message.warning('请先选中要修改的文本');
+      return;
+    }
+    setAiPanelVisible(true);
+  };
+
+  // 应用AI修改
+  const handleApplyAI = (newText: string) => {
+    if (!selectionRange) return;
+
+    const before = content.substring(0, selectionRange.start);
+    const after = content.substring(selectionRange.end);
+    const updatedContent = before + newText + after;
+    
+    setContent(updatedContent);
+    setSelectedText('');
+    setSelectionRange(null);
+  };
+
+  // 取消AI修改
+  const handleCancelAI = () => {
+    setSelectedText('');
+    setSelectionRange(null);
+  };
+
+  const getContextText = () => {
+    if (!selectionRange) return { before: '', after: '' };
+    
+    const before = content.substring(
+      Math.max(0, selectionRange.start - 200), 
+      selectionRange.start
+    );
+    const after = content.substring(
+      selectionRange.end, 
+      Math.min(content.length, selectionRange.end + 200)
+    );
+    
+    return { before, after };
+  };
+
+  const getStatusTag = (status: string) => {
+    const statusMap: Record<string, { color: string; text: string }> = {
+      'not_started': { color: 'default', text: '未开始' },
+      'draft': { color: 'processing', text: '草稿' },
+      'reviewing': { color: 'warning', text: '审阅中' },
+      'completed': { color: 'success', text: '已完成' }
+    };
+    const s = statusMap[status] || statusMap['not_started'];
+    return <Tag color={s.color}>{s.text}</Tag>;
+  };
+
+  // 新增章节
+  const handleAddChapter = async (values: any) => {
+    if (!outline?.id) {
+      message.error('未找到大纲信息');
+      return;
+    }
+
+    try {
+      await chapterApi.addOutlineChapter(outline.id, values);
+      message.success('章节添加成功');
+      setIsAddModalVisible(false);
+      addForm.resetFields();
+      loadChapters();
+    } catch (error) {
+      message.error('添加章节失败');
+    }
+  };
+
+  // 编辑章节信息
+  const handleEditChapterInfo = (chapterInfo: ChapterInfo) => {
+    setEditingChapterInfo(chapterInfo);
+    editForm.setFieldsValue({
+      title: chapterInfo.title,
+      summary: chapterInfo.summary,
+    });
+    setIsEditChapterModalVisible(true);
+  };
+
+  // 保存章节信息编辑
+  const handleSaveChapterInfo = async (values: any) => {
+    if (!editingChapterInfo) return;
+
+    try {
+      await chapterApi.updateOutlineChapter(editingChapterInfo.outline_chapter_id, values);
+      message.success('章节信息更新成功');
+      setIsEditChapterModalVisible(false);
+      setEditingChapterInfo(null);
+      editForm.resetFields();
+      loadChapters();
+    } catch (error) {
+      message.error('更新失败');
+    }
+  };
+
+  // 删除章节
+  const handleDeleteChapter = async (outlineChapterId: number) => {
+    try {
+      await chapterApi.deleteOutlineChapter(outlineChapterId);
+      message.success('章节删除成功');
+      if (selectedChapter?.outline_chapter_id === outlineChapterId) {
+        setSelectedChapter(null);
+        setContent('');
+      }
+      loadChapters();
+    } catch (error) {
+      message.error('删除失败');
+    }
+  };
+
+  return (
+    <Row gutter={16} style={{ height: 'calc(100vh - 200px)' }}>
+      {/* 左侧章节列表 */}
+      <Col span={6}>
+        <Card 
+          title="章节列表"
+          extra={
+            outlineLevel === 'chapter' && (
+              <Button 
+                type="primary" 
+                size="small" 
+                icon={<PlusOutlined />}
+                onClick={() => setIsAddModalVisible(true)}
+              >
+                新增
+              </Button>
+            )
+          }
+          style={{ height: '100%', overflowY: 'auto' }}
+          bodyStyle={{ padding: 0 }}
+        >
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <Spin />
+            </div>
+          ) : outlineLevel === 'volume' ? (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Text type="secondary">
+                {responseMessage}
+              </Text>
+              <Divider />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                💡 提示：请先在"大纲编辑"Tab中将卷级大纲细化为章节大纲，<br/>
+                或重新生成章级大纲后再进行正文编写。
+              </Text>
+            </div>
+          ) : chapters.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Text type="secondary">
+                暂无章节，请先在"大纲编辑"Tab中生成大纲
+              </Text>
+            </div>
+          ) : (
+            <List
+              dataSource={chapters}
+              renderItem={(item) => (
+                <List.Item
+                  style={{ 
+                    cursor: 'pointer',
+                    background: selectedChapter?.outline_chapter_id === item.outline_chapter_id 
+                      ? '#e6f7ff' 
+                      : 'transparent',
+                    padding: '12px 16px'
+                  }}
+                  onClick={() => handleSelectChapter(item)}
+                  actions={[
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditChapterInfo(item);
+                      }}
+                    />,
+                    <Popconfirm
+                      title="确定删除此章节？"
+                      description="删除后将无法恢复，包括已编写的正文内容"
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        handleDeleteChapter(item.outline_chapter_id);
+                      }}
+                      onCancel={(e) => e?.stopPropagation()}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Popconfirm>
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Space>
+                        <Text strong>第{item.chapter_num}章</Text>
+                        {getStatusTag(item.chapter?.status || 'not_started')}
+                      </Space>
+                    }
+                    description={
+                      <div>
+                        <Paragraph ellipsis={{ rows: 1 }} style={{ margin: 0 }}>
+                          {item.title}
+                        </Paragraph>
+                        {item.chapter && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {item.chapter.word_count} 字
+                          </Text>
+                        )}
+                      </div>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
+      </Col>
+
+      {/* 右侧编辑器 */}
+      <Col span={18}>
+        <Card
+          title={
+            selectedChapter ? (
+              <Space>
+                <FileTextOutlined />
+                <span>第{selectedChapter.chapter_num}章：{selectedChapter.title}</span>
+              </Space>
+            ) : (
+              '请选择章节'
+            )
+          }
+          extra={
+            selectedChapter && (
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<RobotOutlined />}
+                  onClick={handleOpenAI}
+                  disabled={!selectedText}
+                >
+                  AI助手
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={handleSave}
+                  loading={saving}
+                >
+                  保存
+                </Button>
+              </Space>
+            )
+          }
+          style={{ height: '100%' }}
+          bodyStyle={{ 
+            height: 'calc(100% - 64px)', 
+            display: 'flex', 
+            flexDirection: 'column' 
+          }}
+        >
+          {selectedChapter ? (
+            <>
+              {/* 章节大纲摘要 */}
+              <Card 
+                size="small" 
+                style={{ marginBottom: 16, background: '#fafafa' }}
+                title="大纲摘要"
+              >
+                <Paragraph style={{ margin: 0 }}>
+                  {selectedChapter.summary || '暂无大纲'}
+                </Paragraph>
+              </Card>
+
+              <Divider style={{ margin: '0 0 16px 0' }} />
+
+              {/* 提示信息 */}
+              <div style={{ marginBottom: 12 }}>
+                <Text type="secondary">
+                  💡 选中任意文本后，点击"AI助手"按钮，即可与AI交互进行修改
+                </Text>
+                {selectedText && (
+                  <Text type="success" style={{ marginLeft: 16 }}>
+                    ✓ 已选中 {selectedText.length} 个字符
+                  </Text>
+                )}
+              </div>
+
+              {/* 文本编辑器 */}
+              <TextArea
+                ref={textAreaRef}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                onSelect={handleTextSelect}
+                placeholder="开始写作..."
+                style={{ 
+                  flex: 1,
+                  fontFamily: 'serif',
+                  fontSize: 16,
+                  lineHeight: 1.8,
+                  resize: 'none'
+                }}
+              />
+
+              {/* 统计信息 */}
+              <div style={{ marginTop: 12, textAlign: 'right' }}>
+                <Space split={<Divider type="vertical" />}>
+                  <Text type="secondary">
+                    字数: {content.replace(/\s/g, '').length}
+                  </Text>
+                  <Text type="secondary">
+                    段落: {content.split('\n\n').filter(p => p.trim()).length}
+                  </Text>
+                </Space>
+              </div>
+            </>
+          ) : (
+            <div style={{ 
+              flex: 1, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              color: '#999'
+            }}>
+              <Space direction="vertical" align="center">
+                <FileTextOutlined style={{ fontSize: 48 }} />
+                <Text type="secondary">请从左侧选择要编辑的章节</Text>
+              </Space>
+            </div>
+          )}
+        </Card>
+      </Col>
+
+      {/* AI助手面板 */}
+      <AIAssistantPanel
+        visible={aiPanelVisible}
+        onClose={() => setAiPanelVisible(false)}
+        projectId={projectId}
+        selectedText={selectedText}
+        contextBefore={getContextText().before}
+        contextAfter={getContextText().after}
+        chapterId={selectedChapter?.chapter?.id}
+        onApply={handleApplyAI}
+        onCancel={handleCancelAI}
+      />
+
+      {/* 新增章节模态框 */}
+      <Modal
+        title="新增章节"
+        open={isAddModalVisible}
+        onCancel={() => {
+          setIsAddModalVisible(false);
+          addForm.resetFields();
+        }}
+        onOk={() => addForm.submit()}
+        okText="添加"
+        cancelText="取消"
+      >
+        <Form
+          form={addForm}
+          layout="vertical"
+          onFinish={handleAddChapter}
+        >
+          <Form.Item
+            label="章节标题"
+            name="title"
+            rules={[{ required: true, message: '请输入章节标题' }]}
+          >
+            <Input placeholder="例如：初入江湖" />
+          </Form.Item>
+          <Form.Item
+            label="章节摘要"
+            name="summary"
+          >
+            <Input.TextArea 
+              rows={4} 
+              placeholder="简要描述本章的主要内容、冲突和情节发展..." 
+            />
+          </Form.Item>
+          <Form.Item
+            label="核心冲突"
+            name="conflicts"
+          >
+            <Input.TextArea rows={2} placeholder="本章的主要矛盾和冲突..." />
+          </Form.Item>
+          <Form.Item
+            label="情感基调"
+            name="emotional_beat"
+          >
+            <Input placeholder="例如：紧张、激动、悲伤..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑章节信息模态框 */}
+      <Modal
+        title="编辑章节信息"
+        open={isEditChapterModalVisible}
+        onCancel={() => {
+          setIsEditChapterModalVisible(false);
+          setEditingChapterInfo(null);
+          editForm.resetFields();
+        }}
+        onOk={() => editForm.submit()}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          onFinish={handleSaveChapterInfo}
+        >
+          <Form.Item
+            label="章节标题"
+            name="title"
+            rules={[{ required: true, message: '请输入章节标题' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            label="章节摘要"
+            name="summary"
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item
+            label="核心冲突"
+            name="conflicts"
+          >
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item
+            label="情感基调"
+            name="emotional_beat"
+          >
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Row>
+  );
+}

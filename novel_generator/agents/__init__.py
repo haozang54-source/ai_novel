@@ -6,6 +6,7 @@ from .outliner_agent import OutlinerAgent
 from .scene_writer_agent import SceneWriterAgent
 from .critic_agent import CriticAgent
 from .research_agent import ResearchAgent
+from .editor_agent import EditorAgent
 
 __all__ = [
     'BaseAgent',
@@ -14,5 +15,6 @@ __all__ = [
     'OutlinerAgent',
     'SceneWriterAgent',
     'CriticAgent',
-    'ResearchAgent'
+    'ResearchAgent',
+    'EditorAgent'
 ]
